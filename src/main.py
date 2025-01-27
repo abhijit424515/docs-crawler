@@ -2,34 +2,61 @@ import os
 import asyncio
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.models import MarkdownGenerationResult
+from surrealdb import AsyncSurrealDB
+from dotenv import load_dotenv
 
 
-async def crawl_page(url: str) -> str | MarkdownGenerationResult | None:
+def setup_env():
+    load_dotenv()
+    for i in ["USERNAME", "PASSWORD", "URL", "DB", "NS"]:
+        if os.getenv(i) is None:
+            raise ValueError(f"[error] {i} env var not set")
+
+
+async def crawl_page(url: str) -> str:
+    x = None
     async with AsyncWebCrawler() as crawler:
         result = await crawler.arun(url)
-        return result.markdown
+        x = result.markdown
+
+    if isinstance(x, MarkdownGenerationResult):
+        x = x.fit_markdown
+        x = x if x is not None else ""
+    elif x is None:
+        x = ""
+    return x
 
 
-def save_markdown(markdown: str, url: str):
-    url_path = "outputs/" + url.replace("https://", "").replace("http://", "")
-    os.makedirs(url_path, exist_ok=True)
-
-    file_path = f"{url_path}/index.md".replace("//", "/")
-    with open(file_path, "w") as f:
-        f.write(markdown)
-    print(f"[SAVED] {file_path}")
+async def save_markdown(data: str, url: str, db: AsyncSurrealDB):
+    await db.insert("pages", {"url": url, "data": data})
 
 
 async def main():
-    url = input("> ")
-    markdown = await crawl_page(url)
+    setup_env()
 
-    if isinstance(markdown, MarkdownGenerationResult):
-        x = markdown.fit_markdown
-        x = x if x is not None else ""
-        save_markdown(x, url)
-    elif isinstance(markdown, str):
-        save_markdown(markdown, url)
+    db = AsyncSurrealDB(os.getenv("URL"))
+    await db.connect()
+    await db.use(os.getenv("NS", ""), os.getenv("DB", ""))
+    token = await db.sign_in(os.getenv("USERNAME", ""), os.getenv("PASSWORD", ""))
+    await db.authenticate(token)
+
+    z = await db.query("select url from pages;")
+    urls = set()
+    for x in z[0]["result"]:
+        urls.add(x["url"])
+
+    while True:
+        url = input("> ")
+        if url in ["exit", "quit", "q"]:
+            break
+        if url in urls:
+            print("[skip] Already crawled")
+            continue
+        urls.add(url)
+        markdown = await crawl_page(url)
+        await save_markdown(markdown, url, db)
+
+    await db.close()
 
 
 if __name__ == "__main__":

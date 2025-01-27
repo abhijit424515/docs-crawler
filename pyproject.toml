@@ -6,4 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "crawl4ai>=0.4.247",
+    "python-dotenv>=1.0.1",
+    "surrealdb>=0.4.1",
 ]
